@@ -23,28 +23,6 @@
 
 ---
 
-## 📁 Project Structure
-
-SmartPick/
-├── backend/
-│ ├── app.py
-│ ├── requirements.txt
-│ └── .env # NOT in git; stores API keys
-├── frontend/
-│ ├── index.html
-│ ├── css/
-│ │ └── style.css
-│ ├── js/
-│ │ └── main.js
-│ ├── pages/
-│ │ ├── media.html
-│ │ └── books.html
-├── .gitignore
-├── README.md
-
-
----
-
 ## 🚦 How It Works
 
 1. **User inputs a movie or book title.**
