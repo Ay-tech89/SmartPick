@@ -1,5 +1,8 @@
 class PageController {
     constructor() {
+        this.apiBase = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
+            ? 'http://localhost:5000'
+            : '';
         this.currentCategory = this.getCurrentCategory();
         this.init();
     }
@@ -147,14 +150,14 @@ class PageController {
             // Route to appropriate API based on category
             if (this.currentCategory === 'books') {
                 // Google Books API 
-                response = await fetch('http://localhost:5000/recommend/google-books', {
+                response = await fetch(`${this.apiBase}/api/recommend/google-books`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ query })
                 });
             } else if (this.currentCategory === 'media') {
                 // OMDB API for movies
-                response = await fetch('http://localhost:5000/recommend/omdb-movies', {
+                response = await fetch(`${this.apiBase}/api/recommend/omdb-movies`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ query })
@@ -185,7 +188,7 @@ class PageController {
             this.displayRecommendations(data.recommendations || []);
         } catch (error) {
             console.error('Search error:', error);
-            this.showError('Failed to search. Make sure the backend server is running on http://localhost:5000');
+            this.showError(`Failed to search. Make sure the backend server is running${this.apiBase ? ' on ' + this.apiBase : ''}`);
         }
     }
 
@@ -199,14 +202,14 @@ class PageController {
             
             if (this.currentCategory === 'books') {
                 // For books, load some default popular books
-                response = await fetch('http://localhost:5000/recommend/google-books', {
+                response = await fetch(`${this.apiBase}/api/recommend/google-books`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ query: 'bestseller fiction' })
                 });
             } else if (this.currentCategory === 'media') {
                 // For movies, load popular movies
-                response = await fetch('http://localhost:5000/recommend/omdb-movies', {
+                response = await fetch(`${this.apiBase}/api/recommend/omdb-movies`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ query: 'avengers' })

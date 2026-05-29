@@ -1,18 +1,44 @@
-# backend/app.py
+# api/index.py
 
 import requests
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import os
+import re
+import logging
 from dotenv import load_dotenv
 
-# Load environment variables from .env file
+# Load environment variables from .env file (primarily for local development)
 load_dotenv()
 
 app = Flask(__name__)
-CORS(app)
 
-# API Keys 
+# Configure Logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Secure CORS configuration
+# Allows:
+# - localhost/127.0.0.1 on any port (local development)
+# - any Vercel domain (for preview/production deployments)
+# - custom domains specified in ALLOWED_ORIGINS environment variable
+allowed_origins = [
+    r"^http://localhost(:\d+)?$",
+    r"^http://127\.0\.0\.1(:\d+)?$",
+    r"^https://.*\.vercel\.app$"
+]
+
+custom_origins_env = os.getenv('ALLOWED_ORIGINS', '')
+if custom_origins_env:
+    for origin in custom_origins_env.split(','):
+        origin = origin.strip()
+        if origin:
+            # Escape to create a literal regex pattern
+            allowed_origins.append(r"^" + re.escape(origin) + r"$")
+
+CORS(app, origins=allowed_origins)
+
+# API Keys loaded securely from environment
 GOOGLE_BOOKS_API_KEY = os.getenv('GOOGLE_BOOKS_API_KEY')
 OMDB_API_KEY = os.getenv('OMDB_API_KEY')
 
@@ -20,14 +46,14 @@ OMDB_API_KEY = os.getenv('OMDB_API_KEY')
 # ROUTES - API ENDPOINTS
 # =====================================================
 
-@app.route('/')
-def index():
+@app.route('/api')
+def api_index():
     return jsonify({
         "message": "Welcome to SmartPick API!",
         "status": "running",
         "endpoints": {
-            "movies": "/api/movies",
-            "books": "/api/books"
+            "movies": "/api/recommend/omdb-movies",
+            "books": "/api/recommend/google-books"
         }
     })
 
@@ -35,18 +61,27 @@ def index():
 # MOVIES - OMDB API
 # =====================================================
 
-
-@app.route('/recommend/omdb-movies', methods=['POST'])
+@app.route('/api/recommend/omdb-movies', methods=['POST'])
 def recommend_omdb_movies():
-    data = request.get_json() or {}
-    query = data.get('query', '').strip()
-    
-    if not query:
-        return jsonify({"error": "No query provided"}), 400
-    
-    url = "http://www.omdbapi.com/"
-    
     try:
+        # Check API key configuration
+        if not OMDB_API_KEY:
+            logger.error("OMDB API key is not configured.")
+            return jsonify({"error": "Service configuration error"}), 500
+
+        data = request.get_json() or {}
+        query = data.get('query', '').strip()
+        
+        if not query:
+            return jsonify({"error": "No query provided"}), 400
+            
+        # Input Validation: Limit length to prevent DoS or abuse
+        if len(query) > 100:
+            return jsonify({"error": "Query too long (maximum 100 characters)"}), 400
+        
+        # Enforce HTTPS connection to prevent credential sniffing
+        url = "https://www.omdbapi.com/"
+        
         search_response = requests.get(url, params={
             'apikey': OMDB_API_KEY, 's': query, 'type': 'movie'
         }, timeout=10)
@@ -96,33 +131,45 @@ def recommend_omdb_movies():
             "query": query
         })
     
+    except requests.exceptions.RequestException as e:
+        logger.error(f"OMDB API Request failed: {str(e)}", exc_info=True)
+        return jsonify({"error": "Failed to fetch from external OMDB API"}), 502
     except Exception as e:
-        return jsonify({"error": f"An error occurred: {str(e)}"}), 500
-
+        logger.error(f"Error handling OMDB movies recommendation: {str(e)}", exc_info=True)
+        # Sanitized error message (do not expose str(e) to client)
+        return jsonify({"error": "An internal server error occurred"}), 500
 
 
 # =====================================================
 # BOOKS - GOOGLE BOOKS API
 # =====================================================
 
-
-@app.route('/recommend/google-books', methods=['POST'])
+@app.route('/api/recommend/google-books', methods=['POST'])
 def recommend_google_books():
-    data = request.get_json() or {}
-    query = data.get('query', '').strip()
-    max_results = data.get('max_results', 10)
-
-    if not query:
-        return jsonify({"error": "No query provided"}), 400
-
-    url = "https://www.googleapis.com/books/v1/volumes"
-    params = {
-        "q": query,
-        "maxResults": min(max_results, 40),
-        "key": GOOGLE_BOOKS_API_KEY
-    }
-
     try:
+        # Check API key configuration
+        if not GOOGLE_BOOKS_API_KEY:
+            logger.error("Google Books API key is not configured.")
+            return jsonify({"error": "Service configuration error"}), 500
+
+        data = request.get_json() or {}
+        query = data.get('query', '').strip()
+        max_results = data.get('max_results', 10)
+
+        if not query:
+            return jsonify({"error": "No query provided"}), 400
+            
+        # Input Validation: Limit length to prevent DoS or abuse
+        if len(query) > 100:
+            return jsonify({"error": "Query too long (maximum 100 characters)"}), 400
+
+        url = "https://www.googleapis.com/books/v1/volumes"
+        params = {
+            "q": query,
+            "maxResults": min(max_results, 40),
+            "key": GOOGLE_BOOKS_API_KEY
+        }
+
         response = requests.get(url, params=params, timeout=10)
         response.raise_for_status()
         data = response.json()
@@ -155,20 +202,22 @@ def recommend_google_books():
         })
 
     except requests.exceptions.RequestException as e:
-        return jsonify({"error": f"Failed to fetch from Google Books API: {str(e)}"}), 500
+        logger.error(f"Google Books API Request failed: {str(e)}", exc_info=True)
+        return jsonify({"error": "Failed to fetch from external Google Books API"}), 502
     except Exception as e:
-        return jsonify({"error": f"An error occurred: {str(e)}"}), 500
+        logger.error(f"Error handling Google Books recommendation: {str(e)}", exc_info=True)
+        # Sanitized error message (do not expose str(e) to client)
+        return jsonify({"error": "An internal server error occurred"}), 500
 
 
 # =====================================================
-# RUN APPLICATION
+# RUN APPLICATION (For Local Testing)
 # =====================================================
-
 
 if __name__ == '__main__':
     print("\n" + "="*50)
-    print("   SmartPick Backend Server Starting...")
+    print("   SmartPick Backend Server Starting (Local Dev Mode)...")
     print("="*50)
-    print("   Books: Google Books API")
-    print("   Movies: OMDB API\n")
+    print("   Books Route:  http://localhost:5000/api/recommend/google-books")
+    print("   Movies Route: http://localhost:5000/api/recommend/omdb-movies\n")
     app.run(debug=True, host='0.0.0.0', port=5000)
